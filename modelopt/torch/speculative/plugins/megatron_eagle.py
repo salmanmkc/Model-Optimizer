@@ -635,6 +635,7 @@ class _DynamicEagleGPTModel(EagleModel):
         eagle_reuse_base_decoder,
         eagle_loss_decay_factor,
         eagle_architecture_config,
+        eagle_decoder_type,
     ):
         if self.config.pipeline_model_parallel_size > 1:
             warnings.warn(
