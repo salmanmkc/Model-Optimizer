@@ -39,20 +39,45 @@ LLAMA_EAGLE_SINGLE_LAYER = {
     "optional": {"d2t", "lm_head.weight"},
 }
 
+KIMIK2_EAGLE_SINGLE_LAYER = {
+    "required": {
+        "midlayer.self_attn.kv_a_layernorm.weight",
+        "midlayer.self_attn.q_a_layernorm.weight",
+        "midlayer.self_attn.q_a_proj.weight",
+        "midlayer.self_attn.q_b_proj.weight",
+        "midlayer.self_attn.kv_a_proj_with_mqa.weight",
+        "midlayer.self_attn.kv_b_proj.weight",
+        "midlayer.self_attn.o_proj.weight",
+        "midlayer.mlp.gate_proj.weight",
+        "midlayer.mlp.up_proj.weight",
+        "midlayer.mlp.down_proj.weight",
+        "midlayer.hidden_norm.weight",
+        "midlayer.input_layernorm.weight",
+        "midlayer.post_attention_layernorm.weight",
+        "norm.weight",
+        "fc.weight",
+    },
+    "optional": {"d2t", "lm_head.weight"},
+}
 
-def _check_valid_sd(state_dict: dict, num_hidden_layers: int):
+
+def _check_valid_sd(state_dict: dict, eagle_decoder_type: str, num_hidden_layers: int):
     """Check the export state dict is valid, otherwise raise Exception."""
+    expected_keys_single_layer = {
+        "llama": LLAMA_EAGLE_SINGLE_LAYER,
+        "kimik2": KIMIK2_EAGLE_SINGLE_LAYER,
+    }[eagle_decoder_type]
     # Check that export sd has required keys
     if num_hidden_layers == 1:
-        for key in LLAMA_EAGLE_SINGLE_LAYER["required"]:
+        for key in expected_keys_single_layer["required"]:
             assert key in state_dict, f"Missing required key: {key}"
     else:
-        for key in LLAMA_EAGLE_SINGLE_LAYER["required"]:
+        for key in expected_keys_single_layer["required"]:
             assert key.replace("midlayer", "midlayer.0") in state_dict, (
                 f"Missing required key: {key}"
             )
         for i in range(1, num_hidden_layers):
-            for key in LLAMA_EAGLE_SINGLE_LAYER["required"] - {
+            for key in expected_keys_single_layer["required"] - {
                 "midlayer.hidden_norm.weight",
                 "midlayer.input_layernorm.weight",
                 "norm.weight",
@@ -62,9 +87,9 @@ def _check_valid_sd(state_dict: dict, num_hidden_layers: int):
                     f"Missing required key: {key}"
                 )
 
-    # check that export sd has no unexpected keys
+    # Check that export sd has no unexpected keys
     allowed_keys_single_layer = (
-        LLAMA_EAGLE_SINGLE_LAYER["required"] + LLAMA_EAGLE_SINGLE_LAYER["optional"]
+        expected_keys_single_layer["required"] + expected_keys_single_layer["optional"]
     )
     if num_hidden_layers == 1:
         for key in state_dict:
@@ -115,7 +140,9 @@ def export_spec_ckpt_state_dict(model: nn.Module):
                 f"parallel_draft_heads.{i}.{model.eagle_config.parallel_draft_heads_num_layers}.weight"
             )
 
-    _check_valid_sd(export_sd, model.eagle_config.num_hidden_layers)
+    _check_valid_sd(
+        export_sd, model.eagle_config.eagle_decoder_type, model.eagle_config.num_hidden_layers
+    )
 
     return export_sd
 
@@ -125,6 +152,7 @@ def export_spec_ckpt_config(model: nn.Module):
     assert spec_opt_only(model), "Not purely eagle model."
 
     # This is the config keys in official checkpoint.
+    # TODO: add kimik2 support
     template_config = {
         "architectures": ["LlamaForCausalLMEagle3"],
         "bos_token_id": None,
