@@ -209,7 +209,7 @@ class EagleModule(nn.Module):
             # Their values depend on specific tokenzier and calibrate dataset, and should be set in training script.
             if config.draft_vocab_size < config.vocab_size:
                 self.register_buffer("d2t", torch.zeros(config.draft_vocab_size, dtype=torch.int64))
-            self.eagle_lm_head = nn.Linear(
+            self.lm_head = nn.Linear(
                 config.hidden_size,
                 config.draft_vocab_size,
                 bias=False,
@@ -237,11 +237,10 @@ class EagleModule(nn.Module):
             )
 
             # In EAGLE-3, input_embeds and hidden_states are normalized separately before concatenation.
-            self.input_embeds_norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-            self.hidden_norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
-            # Disable input norm in first layer. We normed embeds and h individually before.
-            self.layers[0].input_layernorm = nn.Identity()
+            self.layers[0].input_layernorm = LlamaRMSNorm(
+                config.hidden_size, eps=config.rms_norm_eps
+            )
+            self.layers[0].hidden_norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         if self.config.parallel_draft_step > 1:
             self.parallel_draft_heads = torch.nn.ModuleList(
@@ -335,7 +334,7 @@ class EagleModule(nn.Module):
             # In EAGLE-3, we save input embeddings to attribute, and use it in first decoder layer by hook function
             # Also, we normalize input embeddings and hidden states before concatenating them.
             # The default input norm in first layer attn will be disabled.
-            self._input_embeds = self.input_embeds_norm(inputs_embeds)
+            self._input_embeds = self.layers[0].input_layernorm(inputs_embeds)
         else:  # EAGLE-1
             hidden_states = self.fc(torch.cat((inputs_embeds, hidden_states), dim=-1))
 
@@ -767,8 +766,8 @@ class HFEagleModel(EagleModel):
             past_key_values=eagle_cache,
         )
         eagle_lm_head = (
-            self.eagle_module.eagle_lm_head
-            if hasattr(self.eagle_module, "eagle_lm_head")
+            self.eagle_module.lm_head
+            if hasattr(self.eagle_module, "lm_head")
             else self._base_model_lm_head
         )
         eagle_logits = eagle_lm_head(eagle_postnorm_h)

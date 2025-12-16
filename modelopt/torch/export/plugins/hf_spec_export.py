@@ -15,73 +15,65 @@
 
 """Modify state_dict and config for exporting speculative decoding in official format."""
 
+import re
+from copy import copy
+
 import torch
 import torch.nn as nn
 
+LLAMA_EAGLE_SINGLE_LAYER = {
+    "required": {
+        "midlayer.self_attn.q_proj.weight",
+        "midlayer.self_attn.k_proj.weight",
+        "midlayer.self_attn.v_proj.weight",
+        "midlayer.self_attn.o_proj.weight",
+        "midlayer.mlp.gate_proj.weight",
+        "midlayer.mlp.up_proj.weight",
+        "midlayer.mlp.down_proj.weight",
+        "midlayer.hidden_norm.weight",
+        "midlayer.input_layernorm.weight",
+        "midlayer.post_attention_layernorm.weight",
+        "norm.weight",
+        "fc.weight",
+    },
+    "optional": {"d2t", "lm_head.weight"},
+}
 
-def eagle_state_dict_key_convert(num_hidden_layers: int = 1) -> dict[str, dict[str, str]]:
-    """Convert our eagle model state dict key to official format key(s)."""
-    assert num_hidden_layers >= 1, "num_hidden_layers should be at least 1."
-    eagle_modelopt_to_official = {
-        "required": {
-            "norm.weight": "norm.weight",
-            "fc.weight": "fc.weight",
-        },
-        "optional": {
-            "d2t": "d2t",
-            "eagle_lm_head.weight": "lm_head.weight",
-        },
-    }
+
+def _check_valid_sd(state_dict: dict, num_hidden_layers: int):
+    """Check the export state dict is valid, otherwise raise Exception."""
+    # Check that export sd has required keys
     if num_hidden_layers == 1:
-        eagle_modelopt_to_official["required"].update(
-            {
-                "hidden_norm.weight": "midlayer.hidden_norm.weight",
-                "input_embeds_norm.weight": "midlayer.input_layernorm.weight",
-            }
-        )
+        for key in LLAMA_EAGLE_SINGLE_LAYER["required"]:
+            assert key in state_dict, f"Missing required key: {key}"
     else:
-        eagle_modelopt_to_official["required"].update(
-            {
-                "hidden_norm.weight": "midlayer.0.hidden_norm.weight",
-                "input_embeds_norm.weight": "midlayer.0.input_layernorm.weight",
-            }
-        )
-    for i in range(num_hidden_layers):
-        if num_hidden_layers == 1:
-            index = ""
-        else:
-            index = f".{i}"
-        eagle_modelopt_to_official["required"].update(
-            {
-                f"layers.{i}.self_attn.q_proj.weight": "midlayer"
-                + index
-                + ".self_attn.q_proj.weight",
-                f"layers.{i}.self_attn.k_proj.weight": "midlayer"
-                + index
-                + ".self_attn.k_proj.weight",
-                f"layers.{i}.self_attn.v_proj.weight": "midlayer"
-                + index
-                + ".self_attn.v_proj.weight",
-                f"layers.{i}.self_attn.o_proj.weight": "midlayer"
-                + index
-                + ".self_attn.o_proj.weight",
-                f"layers.{i}.mlp.gate_proj.weight": "midlayer" + index + ".mlp.gate_proj.weight",
-                f"layers.{i}.mlp.up_proj.weight": "midlayer" + index + ".mlp.up_proj.weight",
-                f"layers.{i}.mlp.down_proj.weight": "midlayer" + index + ".mlp.down_proj.weight",
-                f"layers.{i}.post_attention_layernorm.weight": "midlayer"
-                + index
-                + ".post_attention_layernorm.weight",
-            }
-        )
-    return eagle_modelopt_to_official
+        for key in LLAMA_EAGLE_SINGLE_LAYER["required"]:
+            assert key.replace("midlayer", "midlayer.0") in state_dict, (
+                f"Missing required key: {key}"
+            )
+        for i in range(1, num_hidden_layers):
+            for key in LLAMA_EAGLE_SINGLE_LAYER["required"] - {
+                "midlayer.hidden_norm.weight",
+                "midlayer.input_layernorm.weight",
+                "norm.weight",
+                "fc.weight",
+            }:
+                assert key.replace("midlayer", f"midlayer.{i}") in state_dict, (
+                    f"Missing required key: {key}"
+                )
 
-
-def _check_state_dict_keys_match(draft_model: nn.Module, required_items: dict):
-    """Check if the state dict keys match."""
-    draft_keys = set(draft_model.state_dict().keys())
-    for required_key in required_items:
-        if required_key not in draft_keys:
-            raise ValueError(f"State dict keys mismatch!\nMissing in draft model: {required_key}")
+    # check that export sd has no unexpected keys
+    allowed_keys_single_layer = (
+        LLAMA_EAGLE_SINGLE_LAYER["required"] + LLAMA_EAGLE_SINGLE_LAYER["optional"]
+    )
+    if num_hidden_layers == 1:
+        for key in state_dict:
+            assert key in allowed_keys_single_layer, f"Unexpected key: {key}"
+    else:
+        for key in state_dict:
+            assert re.sub(r"midlayers\.\d+\.", "", "layers.1212.a") in {
+                k.replace("midlayer.", "") for k in allowed_keys_single_layer
+            }, f"Unexpected key: {key}"
 
 
 def spec_opt_only(model: nn.Module):
@@ -97,40 +89,35 @@ def export_spec_ckpt_state_dict(model: nn.Module):
     # check the model has only speculative decoding
     assert spec_opt_only(model), "Not purely eagle model."
 
-    eagle_modelopt_to_official = eagle_state_dict_key_convert(model.eagle_config.num_hidden_layers)
-    # Check if the state dict keys match
-    _check_state_dict_keys_match(model.eagle_module, eagle_modelopt_to_official["required"])
+    # Rename layers to midlayer
+    if model.eagle_config.num_hidden_layers == 1:
+        model.eagle_module.midlayer = model.eagle_module._modules.pop("layers")[0]
+    else:
+        model.eagle_module.midlayer = model.eagle_module._modules.pop("layers")
+    export_sd = copy(model.eagle_module.state_dict())
 
-    # Convert key names and save the state dict
-    eagle_state = model.eagle_module.state_dict()
-    export_state_dict = {}
-    for ours_key, export_key in {
-        **eagle_modelopt_to_official["required"],
-        **eagle_modelopt_to_official["optional"],
-    }.items():
-        if ours_key in eagle_state:
-            export_state_dict[export_key] = eagle_state[ours_key]
+    # Use base model's lm head if draft model doesn't have one
+    if "lm_head.weight" not in export_sd:
+        export_sd["lm_head.weight"] = model.state_dict()["lm_head.weight"]
 
-    # TODO: (hg) this is a temp fix. Find cleaner way to do this.
-    if "eagle_lm_head.weight" not in eagle_state:
-        export_state_dict["lm_head.weight"] = model.state_dict()["lm_head.weight"]
-
-    # Add parallel draft weights
+    # Rename parallel draft weights
     if model.eagle_config.parallel_draft_step > 1:
         for i in range(model.eagle_config.parallel_draft_step - 1):
             for j in range(model.eagle_config.parallel_draft_heads_num_layers):
-                export_state_dict[f"parallel_draft_heads.{i}.medusa_layers.{j}.linear.weight"] = (
-                    eagle_state[f"parallel_draft_heads.{i}.{j}.linear.weight"]
+                export_sd[f"parallel_draft_heads.{i}.medusa_layers.{j}.linear.weight"] = (
+                    export_sd.pop(f"parallel_draft_heads.{i}.{j}.linear.weight")
                 )
-                if f"parallel_draft_heads.{i}.{j}.linear.bias" in eagle_state:
-                    export_state_dict[f"parallel_draft_heads.{i}.medusa_layers.{j}.linear.bias"] = (
-                        eagle_state[f"parallel_draft_heads.{i}.{j}.linear.bias"]
+                if f"parallel_draft_heads.{i}.{j}.linear.bias" in export_sd:
+                    export_sd[f"parallel_draft_heads.{i}.medusa_layers.{j}.linear.bias"] = (
+                        export_sd.pop(f"parallel_draft_heads.{i}.{j}.linear.bias")
                     )
-            export_state_dict[f"parallel_draft_heads.{i}.lm_head.weight"] = eagle_state[
+            export_sd[f"parallel_draft_heads.{i}.lm_head.weight"] = export_sd.pop(
                 f"parallel_draft_heads.{i}.{model.eagle_config.parallel_draft_heads_num_layers}.weight"
-            ]
+            )
 
-    return export_state_dict
+    _check_valid_sd(export_sd, model.eagle_config.num_hidden_layers)
+
+    return export_sd
 
 
 def export_spec_ckpt_config(model: nn.Module):
