@@ -112,7 +112,7 @@ class MedusaArguments:
 class EagleArguments:
     eagle_config: str = field(default=None, metadata={"help": "Path to eagle_config.json"})
     eagle_decoder_type: str = field(
-        default="kimik2",
+        default="llama",
         metadata={"help": "The class of eagle decoder to use. Available options: llama, kimik2"},
     )
 

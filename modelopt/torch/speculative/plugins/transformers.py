@@ -493,14 +493,13 @@ class HFEagleModel(EagleModel):
             eagle_architecture_config=eagle_architecture_config,
         )
 
-        if eagle_decoder_type == "kimik2":
-            decoder_cls = _setup_kimi_k2_decoder()
-            self.eagle_config = PretrainedConfig.from_dict(eagle_architecture_config)
-
-        elif eagle_decoder_type == "llama":
+        if eagle_decoder_type == "llama":
             # Use default eagle config
             decoder_cls = LlamaDecoderLayer
-            self.eagle_config = PretrainedConfig.from_dict(eagle_architecture_config)
+        elif eagle_decoder_type == "kimik2":
+            decoder_cls = _setup_kimi_k2_decoder()
+
+        self.eagle_config = PretrainedConfig.from_dict(eagle_architecture_config)
         # Hidden size and vocab size must match base model
         self.eagle_config.hidden_size = self._base_llm_config.hidden_size
         self.eagle_config.vocab_size = self._base_llm_config.vocab_size
