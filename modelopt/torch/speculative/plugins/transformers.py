@@ -45,6 +45,7 @@ from transformers.models.llama.modeling_llama import (
 )
 from transformers.trainer_pt_utils import LabelSmoother
 from transformers.utils import ModelOutput
+from transformers.utils.quantization_config import QuantizationMethod
 
 from ..eagle.conversion import EagleDMRegistry
 from ..eagle.eagle_model import EagleModel
@@ -294,7 +295,7 @@ class EagleModule(nn.Module):
         input_embeds = self._input_embeds
         self._input_embeds = None
         kwargs["hidden_states"] = torch.cat(
-            (input_embeds, self.hidden_norm(kwargs["hidden_states"])), dim=-1
+            (input_embeds, self.layers[0].hidden_norm(kwargs["hidden_states"])), dim=-1
         )
 
         return args, kwargs
@@ -499,6 +500,7 @@ class HFEagleModel(EagleModel):
             decoder_cls = _setup_kimi_k2_decoder()
 
         self.eagle_config = PretrainedConfig.from_dict(eagle_architecture_config)
+        self.eagle_config.eagle_decoder_type = eagle_decoder_type
         # Hidden size and vocab size must match base model
         self.eagle_config.hidden_size = self._base_llm_config.hidden_size
         self.eagle_config.vocab_size = self._base_llm_config.vocab_size
@@ -509,6 +511,14 @@ class HFEagleModel(EagleModel):
 
         if self.eagle_config._attn_implementation is None:
             self.eagle_config._attn_implementation = "sdpa"
+
+        # Patch for Kimi-K2-Thinking, avoid quantizing drafter
+        if (
+            hasattr(self.config, "quantization_config")
+            and self.config.quantization_config.quant_method
+            == QuantizationMethod.COMPRESSED_TENSORS
+        ):
+            self.config.quantization_config.quantization_config.ignore.append("re:.*eagle_module.*")
 
         # Use default aux_hidden_state layers if use_aux_hidden_state is True
         # but no layer id is given

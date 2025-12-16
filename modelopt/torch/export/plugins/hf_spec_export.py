@@ -89,7 +89,7 @@ def _check_valid_sd(state_dict: dict, eagle_decoder_type: str, num_hidden_layers
 
     # Check that export sd has no unexpected keys
     allowed_keys_single_layer = (
-        expected_keys_single_layer["required"] + expected_keys_single_layer["optional"]
+        expected_keys_single_layer["required"] | expected_keys_single_layer["optional"]
     )
     if num_hidden_layers == 1:
         for key in state_dict:
@@ -153,7 +153,7 @@ def export_spec_ckpt_config(model: nn.Module):
 
     # This is the config keys in official checkpoint.
     # TODO: add kimik2 support
-    template_config = {
+    llama_eagle_template_config = {
         "architectures": ["LlamaForCausalLMEagle3"],
         "bos_token_id": None,
         "eos_token_id": None,
@@ -192,6 +192,104 @@ def export_spec_ckpt_config(model: nn.Module):
             "parallel_draft_heads_num_layers": None,
         },
     }
+
+    kimik2_eagle_template_config = {
+        "architectures": ["Eagle3DeepseekV2ForCausalLM"],
+        "attention_bias": None,
+        "attention_dropout": None,
+        "aux_loss_alpha": None,
+        "bos_token_id": None,
+        "chunk_size_feed_forward": None,
+        "diversity_penalty": None,
+        "do_sample": None,
+        "early_stopping": None,
+        "encoder_no_repeat_ngram_size": None,
+        "eos_token_id": None,
+        "ep_size": None,
+        "first_k_dense_replace": None,
+        "forced_bos_token_id": None,
+        "forced_eos_token_id": None,
+        "hidden_act": None,
+        "hidden_size": None,
+        "id2label": None,
+        "initializer_range": None,
+        "intermediate_size": None,
+        "is_decoder": None,
+        "is_encoder_decoder": None,
+        "kv_lora_rank": None,
+        "label2id": None,
+        "length_penalty": None,
+        "max_length": None,
+        "max_position_embeddings": None,
+        "min_length": None,
+        "model_type": "kimi_k2",
+        "moe_intermediate_size": None,
+        "moe_layer_freq": None,
+        "n_group": None,
+        "n_routed_experts": None,
+        "n_shared_experts": None,
+        "no_repeat_ngram_size": None,
+        "norm_topk_prob": None,
+        "num_attention_heads": None,
+        "num_beam_groups": None,
+        "num_beams": None,
+        "num_experts_per_tok": None,
+        "num_hidden_layers": None,
+        "num_key_value_heads": None,
+        "num_nextn_predict_layers": None,
+        "num_return_sequences": None,
+        "output_attentions": None,
+        "output_hidden_states": None,
+        "output_scores": None,
+        "pad_token_id": None,
+        "pretraining_tp": None,
+        "pruned_heads": None,
+        "q_lora_rank": None,
+        "qk_nope_head_dim": None,
+        "qk_rope_head_dim": None,
+        "remove_invalid_values": None,
+        "repetition_penalty": None,
+        "return_dict": None,
+        "return_dict_in_generate": None,
+        "rms_norm_eps": None,
+        "rope_scaling": None,
+        "rope_theta": None,
+        "routed_scaling_factor": None,
+        "scoring_func": None,
+        "sep_token_id": None,
+        "seq_aux": None,
+        "temperature": None,
+        "tf_legacy_loss": None,
+        "tie_encoder_decoder": None,
+        "tie_word_embeddings": None,
+        "top_k": None,
+        "top_p": None,
+        "topk_group": None,
+        "topk_method": None,
+        "torch_dtype": None,
+        "torchscript": None,
+        "transformers_version": None,
+        "typical_p": None,
+        "use_bfloat16": None,
+        "use_cache": None,
+        "v_head_dim": None,
+        "vocab_size": None,
+        "eagle_config": {
+            "eagle_aux_hidden_state_layer_ids": None,
+            "use_aux_hidden_state": None,
+            "use_input_layernorm_in_first_layer": None,
+            "use_last_layernorm": None,
+            "use_mtp_layernorm": None,
+            "next_layer_regular": True,
+            "parallel_draft_step": None,
+            "parallel_draft_heads_num_layers": None,
+        },
+    }
+
+    template_config: dict = {
+        "llama": llama_eagle_template_config,
+        "kimik2": kimik2_eagle_template_config,
+    }[model.eagle_config.eagle_decoder_type]
 
     def _get_config_from_eagle_config_or_base_config(key: str, model: nn.Module):
         if getattr(model.eagle_config, key, None) is not None:

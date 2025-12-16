@@ -148,7 +148,7 @@ def train():
 
     if checkpoint:
         model = transformers.AutoModelForCausalLM.from_pretrained(checkpoint, torch_dtype="auto")
-        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
+        tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True)
     else:
         # To avoid OOM for large models, we load and convert model on CPU first.
         # Model will be moved to GPU during HF trainer.init().
